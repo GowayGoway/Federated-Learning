@@ -24,8 +24,9 @@ class DatasetSplit(Dataset):
 
 
 class LocalUpdate(object):
-    def __init__(self, args, dataset=None, idxs=None):
+    def __init__(self, args, dataset=None, idxs=None, lr=None):
         self.args = args
+        self.lr = lr
         self.loss_func = nn.CrossEntropyLoss()
         self.selected_clients = []
         self.ldr_train = DataLoader(DatasetSplit(dataset, idxs), batch_size=self.args.local_bs, shuffle=True)#batch_size也就是args.local_bs，每一批加载多少个样本
@@ -33,7 +34,7 @@ class LocalUpdate(object):
     def train(self, net):#针对一个用户一轮的本地模型训练
         net.train()
         # train and update
-        optimizer = torch.optim.SGD(net.parameters(), lr=self.args.lr, momentum=0.5)
+        optimizer = torch.optim.SGD(net.parameters(), lr=self.lr, momentum=0.5)
 
         epoch_loss = [] #每次迭代的损失，一共迭代 args.local_ep=5 次，每次迭代遍历600个样本
         for iter in range(self.args.local_ep):#每个用户每轮本地训练模型时迭代5次

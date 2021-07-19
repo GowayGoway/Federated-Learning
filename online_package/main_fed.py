@@ -44,18 +44,19 @@ if __name__ == '__main__':
     if args.dataset == 'mnist':     #图片格式为28*28*1
         #Compose函数把多个图像处理步骤放在一起
         trans_mnist = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]) #均值和方差
-        dataset_train = datasets.MNIST('../dataset/MNIST/', train=True, download=True, transform=trans_mnist)
-        dataset_test = datasets.MNIST('../dataset/MNIST/', train=False, download=True, transform=trans_mnist)
+        dataset_train = datasets.MNIST('../dataset/', train=True, download=True, transform=trans_mnist)
+        dataset_test = datasets.MNIST('../dataset/', train=False, download=True, transform=trans_mnist)
         # sample users
         if args.iid:
             #dict_users = mnist_iid(dataset_train, args.num_users)   #把数据集分成100份，即每份600个
-            dict_users=np.load(f'./save/dict_users_{args.num_users}.npy',allow_pickle=True).tolist()
+            dict_users=np.load(f'./save/dict_users_{args.num_users}_L-{args.L}.npy',allow_pickle=True).tolist()
         else:
-            dict_users = mnist_noniid(dataset_train, args.num_users)
+            # dict_users = mnist_noniid(dataset_train, args.num_users)
+            dict_users=np.load(f'./save/dict_users_{args.num_users}_L-{args.L}.npy',allow_pickle=True).tolist()
     elif args.dataset == 'cifar':   #图片格式为32*32*3
         trans_cifar = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        dataset_train = datasets.CIFAR10('../dataset/cifar', train=True, download=True, transform=trans_cifar)
-        dataset_test = datasets.CIFAR10('../dataset/cifar', train=False, download=True, transform=trans_cifar)
+        dataset_train = datasets.CIFAR10('../dataset/', train=True, download=True, transform=trans_cifar)
+        dataset_test = datasets.CIFAR10('../dataset/', train=False, download=True, transform=trans_cifar)
         if args.iid:
             dict_users = cifar_iid(dataset_train, args.num_users)
         else:
@@ -86,16 +87,18 @@ if __name__ == '__main__':
     # training
     loss_train = [] #存放每进行一次FedAvg的损失
     round_accuracy=[]
+    user_num =[] # 存放每进行一次FedAvg的用户数量
 
+    lr=args.lr #学习率
     gama=1  #信道分配
     B=1     #信道增益
     S=100   #模型大小
     p=1     #传输功率
     N0=1    #噪声功率
-    sigma=1/3
+    sigma=1/6 
     computer_level=np.random.uniform(1,9,args.num_users).tolist()  #计算能力
     communicate_time=[] #记录每轮通信时间
-    T_round=1000 #每轮限制时间 设置为1000/1500/2000
+    T_round = 1000 #每轮限制时间 设置为1000/1500/2000
 
     #绘图坐标
     communicate_time = []#绘制的图像的横轴
@@ -106,7 +109,7 @@ if __name__ == '__main__':
     acc=95
 
     # time_start=time.time() #计时开始
-    while acc_test<acc:     #训练达到指定精度停止
+    while (acc_test <= acc) and (iter < 30):     #训练达到指定精度停止
         h_sq= np.abs(np.random.exponential(1,args.num_users).tolist())  #信道增益的平方,服从指数分布
         all_upload_time_list=[int(S/(gama*B*np.log2(1+p*i/gama*B*N0))) for i in h_sq]   #上传时间
         print('Round {:3d}'.format(iter+1))
@@ -170,7 +173,7 @@ if __name__ == '__main__':
                 weight_time[ind] = upload_time_list[ind]    #重量只有上传时间
 
             #求二范数过程
-            local = LocalUpdate(args=args, dataset=dataset_train, idxs=dict_users[ind]) #idxs为一个用户的数据集，大小为600
+            local = LocalUpdate(args=args, dataset=dataset_train, idxs=dict_users[ind], lr=lr) #idxs为一个用户的数据集，大小为600
             ww, loss = local.train(net=copy.deepcopy(net_glob).to(args.device))
             #求该用户二范数的变化量
             w=copy.deepcopy(ww)              #某用户训练完后的权值
@@ -218,6 +221,7 @@ if __name__ == '__main__':
                     continue
         
         print('挑选的用户为：',select_client,'数量为：',len(select_client))
+        user_num.append(len(select_client))
         print('本轮所耗费时间:%d'%(z))
 
         try:
@@ -245,7 +249,7 @@ if __name__ == '__main__':
  
         communicate_time.append(z)
         iter = iter + 1
-    #最新画图版本
+
     # plot loss curve
     Time=time.strftime("%m.%d.%H.%M", time.localtime()) #记录时间，用来画图的命名
 
@@ -253,7 +257,7 @@ if __name__ == '__main__':
     plt.plot(range(len(loss_train)), loss_train)
     plt.xlabel('Round')
     plt.ylabel('Train_loss')
-    plt.savefig('./figure/{}_Train loss_{}_IID-{}_Epochs-{}_T round-{}.png'.format(Time,args.model,args.iid,iter,T_round))
+    plt.savefig('./figure/{}_Train loss_{}_IID L-{}_Epochs-{}_Accuracy-{}_T round-{}.png'.format(Time,args.model,args.L,iter,acc,T_round))
 
     # plot accuracy curve
     plt.figure()
@@ -261,15 +265,20 @@ if __name__ == '__main__':
     plt.plot(plot_x,round_accuracy)
     plt.xlabel('Time / s')
     plt.ylabel('Test_accurac / %')
-    plt.savefig('./figure/{}_Test accuracy_{}_IID-{}_Epochs-{}_T round-{}.png'.format(Time,args.model,args.iid,iter,T_round))
+    plt.savefig('./figure/{}_Test accuracy_{}_IID L-{}_Epochs-{}_Accuracy-{}_T round-{}.png'.format(Time,args.model,args.L,iter,acc,T_round))
 
     # save data
     plot_data=[] #第一个保存训练损失，第二个保存时间，第三个保存测试精度
     plot_data.append(loss_train)
     plot_data.append(plot_x)
     plot_data.append(round_accuracy)
-    np.save('./figure data/{}_Figure data_{}_IID-{}_Epochs-{}_T round-{}.npy'.format(Time,args.model,args.iid,iter,T_round),plot_data)
+    plot_data.append(user_num)
+    np.save('./figure data/{}_Figure data_{}_IID L-{}_Epochs-{}_Accuracy-{}_T round-{}.npy'.format(Time,args.model,args.L,iter,acc,T_round),plot_data)
     print('数据保存成功')
+
+    # # 华为云移动文件
+    # import moxing as mox
+    # mox.file.copy_parallel("./figure data","obs://federated--learning/online/figure data")
 
 
 

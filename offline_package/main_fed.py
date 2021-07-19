@@ -59,13 +59,14 @@ if __name__ == '__main__':
         # sample users
         if args.iid:
             #dict_users = mnist_iid(dataset_train, args.num_users)   #args.num_users=100=>把数据集分成100份（因为一共有100个用户），即每份600个  已经改成各个用户的数据成正太分布
-            dict_users=np.load(f'./save/dict_users_{args.num_users}.npy',allow_pickle=True).tolist()
+            dict_users=np.load(f'./save/dict_users_{args.num_users}_L-{args.L}.npy',allow_pickle=True).tolist()
         else:
-            dict_users = mnist_noniid(dataset_train, args.num_users)
+            #dict_users = mnist_noniid(dataset_train, args.num_users)
+            dict_users=np.load(f'./save/dict_users_{args.num_users}_L-{args.L}.npy',allow_pickle=True).tolist()
     elif args.dataset == 'cifar':   #图片格式为32*32*3
         trans_cifar = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        dataset_train = datasets.CIFAR10('C:/Users/86132/dataset/cifar', train=True, download=True, transform=trans_cifar)
-        dataset_test = datasets.CIFAR10('C:/Users/86132/dataset/cifar', train=False, download=True, transform=trans_cifar)
+        dataset_train = datasets.CIFAR10('../dataset/', train=True, download=True, transform=trans_cifar)
+        dataset_test = datasets.CIFAR10('../dataset/', train=False, download=True, transform=trans_cifar)
         if args.iid:
             dict_users = cifar_iid(dataset_train, args.num_users)
         else:
@@ -107,31 +108,33 @@ if __name__ == '__main__':
     plot_x = []#绘制的图像的横轴
     acc_train_set = []#训练集上的准确率的集合
     round_accuracy = []#测试集上的准确率的集合
+    user_num = []   # 存储每轮选中的用户数量
+    lr= args.lr
 
     gama = 1  #信道分配
     B = 1     #信道增益
     S = 50   #模型大小
     p = 1     #传输功率
     N0 = 1    #噪声功率
-    sigma=1/3
+    sigma=1/6
     # h_sq = np.random.exponential(1,args.num_users)  #信道增益的平方,服从指数分布
     # upload_time = [int(S/(gama*B*np.log2(1+p*i/gama*B*N0))) for i in h_sq]   #上传时间=模型大小/香农定理算出来的最大传输速率
     computer_level=np.random.uniform(1,9,args.num_users)  #计算能力 符合均匀分布，均值为5
     train_time = [int(sigma*args.local_ep * len(dict_users[i]) / computer_level[i]) for i in range(args.num_users)]  # 本轮训练时间列表 = 每个用户循环的次数（args.local_ep）乘用户的数据集大小/计算能力
     communicate_time=[] #记录每轮通信时间
 
-    T_round = 1000 #每轮限制总时间 设置为1000/1500/2000
+    T_round = 2000 #每轮限制总时间 设置为1000/1500/2000
 
-    time_start_sum = time.time()#记录所有轮数的起始训练时间
+    time_start_sum = time.time()            # 记录所有轮数的起始训练时间
     m = max(int(args.frac * args.num_users), 1)  # 挑选10个用户
     #rest_user = list(range(args.num_users))  # 还没被挑选的用户 是10的整数倍
     #print(args.num_users)
     #每轮选10个用户
     acc_test=0
     iter=0
-    acc=99
+    acc=95
     # for iter in range(args.epochs):#共进行10轮
-    while acc_test<=acc:
+    while (acc_test<=acc) and (iter < 30):
         print('Round {:3d}'.format(iter+1))
         idxs_users = np.random.choice(range(args.num_users), m, replace=False)#本轮选择的用户的真实编号
         #print('idxs_users',idxs_users)
@@ -154,10 +157,16 @@ if __name__ == '__main__':
 
         for idx in train_order:#一共循环10次 表示一轮中10个用户参与本地训练
             #LocalUpdate为一个用户一轮的训练网络的类  在Update.py文件中
-            local = LocalUpdate(args=args, dataset=dataset_train, idxs=dict_users[idx]) #idxs为一个用户的数据集，大小为600
+            # if acc_test>=98.5:
+            #     lr = 0.05
+            # elif acc_test>=98:
+            #     lr = 0.01 
+            # else:
+            #     lr = 0.05
+            local = LocalUpdate(args=args, dataset=dataset_train, idxs=dict_users[idx], lr=lr) #idxs为一个用户的数据集，大小为600
             ww, loss = local.train(net=copy.deepcopy(net_glob).to(args.device))
-            delta_time[idx] = upload_time[idx]  #上传时间
-            local_train_time.append(train_time[idx])#参与本地训练的用户的训练时间的集合
+            delta_time[idx] = upload_time[idx]       # 上传时间
+            local_train_time.append(train_time[idx]) # 参与本地训练的用户的训练时间的集合
 
             #求该用户二范数的变化量
             w=copy.deepcopy(ww)              #某用户训练完后的权值
@@ -185,9 +194,9 @@ if __name__ == '__main__':
             delta_time_list = [delta_time[key] for key in delta_time]
             user_norm_list = [user_norm[key] for key in user_norm]
             # print('当前进行完本地训练的总用户数', len(delta_time_list))
-            pack_capacity = T_round-train_time[user_order[-1]]#当前背包总容量
+            pack_capacity = T_round - train_time[user_order[-1]]#当前背包总容量
             if pack_capacity <= 0:  
-                print('本次没有进行背包。。')
+                print('本次没有进行背包')
                 break
 
             returned_value_list, value = pack(pack_capacity, delta_time_list, user_norm_list)
@@ -203,12 +212,13 @@ if __name__ == '__main__':
             ############################################################################
 
         final_selected_user_order = one_epoch_selected_user[-1]  # 确定本轮拐点处选择的用户的顺序编号
-        final_actual_selected_user = one_epoch_actual_selected_user[-1]# 确定本轮拐点处选择的用户的真实编号
+        final_actual_selected_user = one_epoch_actual_selected_user[-1] # 确定本轮拐点处选择的用户的真实编号
         print('最终选中的用户为',final_actual_selected_user,'数量为',len(final_actual_selected_user))
+        user_num.append(len(final_actual_selected_user))
         selected_upload_time = [upload_time[i] for i in final_actual_selected_user]#被选择的用户的上传时间的集合
         actual_w_locals = [w_locals[i - 1] for i in final_selected_user_order]  # 选择用户用于全局模型的更新 actual_w_locals记录被选择的用户的模型参数
         actual_loss_locals = [loss_locals[i - 1] for i in final_selected_user_order]  # 记录被选择的用户的损失
-        time_sum = local_train_time[-1]+sum(selected_upload_time)#一轮的总通信时间是经过本地训练的用户的训练时间的最大值和被选中的用户的上传时间的总和
+        time_sum = local_train_time[-2]+sum(selected_upload_time)#一轮的总通信时间是经过本地训练的用户的训练时间的最大值和被选中的用户的上传时间的总和
         print('本轮总用时',time_sum, 's')
 
         plot_x_gap = time_sum#要绘制的图像的相邻两点的时间差
@@ -239,37 +249,13 @@ if __name__ == '__main__':
 
     # Time = time.strftime("%m.%d.%H.%M", time.localtime()) #记录时间，用来画图的命名
 
-    # plt.figure()
-    # plt.plot(range(len(loss_train)), loss_train)
-    # plt.xlabel('Round')
-    # plt.ylabel('Train_loss')
-    # plt.savefig('./figure/{}_Train loss_{}_Epochs-{}_T round-{}_accuracy-{}.png'.format(Time,args.model,iter,T_round,acc))#format中的参数对应于前面单引号中的大括号里面的内容
-
-    # # plot accuracy curve
-    # plt.figure()
-    # # plot_x=[sum(communicate_time[:i+1]) for i in range(len(communicate_time))]  #计算横坐标
-    # plt.plot(plot_x, round_accuracy)
-    # plt.xlabel('Time / s')
-    # plt.ylabel('Test_accuracy / %')
-    # plt.savefig('./figure/{}_Test accuracy_{}_Epochs-{}_T round-{}_accuracy-{}.png'.format(Time,args.model,iter,T_round,acc))
-
-    # # save data
-    # plot_data=[] #第一个保存训练损失，第二个保存时间，第三个保存测试精度
-    # plot_data.append(loss_train)
-    # plot_data.append(plot_x)
-    # plot_data.append(round_accuracy)
-    # np.save('./figure_data/{}_Figure data_{}_Epochs-{}_T round-{}_accuracy-{}.npy'.format(Time,args.model,iter,T_round,acc),plot_data)
-    # print('数据保存成功')
-
-    # print("Testing accuracy: {:.2f}%".format(acc_test))
-
     Time=time.strftime("%m.%d.%H.%M", time.localtime()) #记录时间，用来画图的命名
 
     plt.figure()
     plt.plot(range(len(loss_train)), loss_train)
     plt.xlabel('Round')
     plt.ylabel('Train_loss')
-    plt.savefig('./figure/{}_Train loss_{}_IID-{}_Epochs-{}_T round-{}.png'.format(Time,args.model,args.iid,iter,T_round))
+    plt.savefig('./figure/{}_Train loss_{}_IID L-{}_Epochs-{}_Accuracy-{}_T round-{}.png'.format(Time,args.model,args.L,iter,acc,T_round))
 
     # plot accuracy curve
     plt.figure()
@@ -277,17 +263,18 @@ if __name__ == '__main__':
     plt.plot(plot_x,round_accuracy)
     plt.xlabel('Time / s')
     plt.ylabel('Test_accurac / %')
-    plt.savefig('./figure/{}_Test accuracy_{}_IID-{}_Epochs-{}_T round-{}.png'.format(Time,args.model,args.iid,iter,T_round))
+    plt.savefig('./figure/{}_Test accuracy_{}_IID L-{}_Epochs-{}_Accuracy-{}_T round-{}.png'.format(Time,args.model,args.L,iter,acc,T_round))
 
     # save data
     plot_data=[] #第一个保存训练损失，第二个保存时间，第三个保存测试精度
     plot_data.append(loss_train)
     plot_data.append(plot_x)
     plot_data.append(round_accuracy)
-    np.save('./figure data/{}_Figure data_{}_IID-{}_Epochs-{}_T round-{}.npy'.format(Time,args.model,args.iid,iter,T_round),plot_data)
+    plot_data.append(user_num)
+    np.save('./figure data/{}_Figure data_{}_IID L-{}_Epochs-{}_Accuracy-{}_T round-{}.npy'.format(Time,args.model,args.L,iter,acc,T_round),plot_data)
     print('数据保存成功')
 
-
-
-
+    # # 华为云移动文件
+    # import moxing as mox
+    # mox.file.copy_parallel("./figure data","obs://federated--learning/offline/figure data")
 
